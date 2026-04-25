@@ -350,7 +350,8 @@ if st.session_state.get('dashboard_active', False):
                                 team_passes['angle'] = np.degrees(np.arctan2(team_passes['end_y'] - team_passes['y'], team_passes['end_x'] - team_passes['x']))
                                 team_passes['angle'] = team_passes['angle'] % 360
                                 
-                                avg_locs = team_passes.groupby('player').agg({'x': 'mean', 'y': 'mean'}).reset_index()
+                                # Use all events for the average location, exactly like the passing network
+                                avg_locs = team_events_selected.groupby('player').agg({'x': 'mean', 'y': 'mean'}).reset_index()
                                 
                                 t_color = TEAM_COLORS.get(team, DEFAULT_COLORS[i])
                                 
