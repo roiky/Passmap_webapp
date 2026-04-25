@@ -365,14 +365,22 @@ if st.session_state.get('dashboard_active', False):
                                         # Max radius scaling based on count
                                         max_count = max(counts)
                                         base_radius = 5.0 * node_scale
+                                        import matplotlib.cm as cm
+                                        
+                                        # Use a vibrant colormap for gradients
+                                        cmap = cm.get_cmap('plasma')
                                         
                                         for bin_idx, count in enumerate(counts):
                                             if count > 0:
-                                                r = base_radius * (count / max_count)
+                                                intensity = count / max_count
+                                                r = base_radius * intensity
                                                 theta1 = bins[bin_idx]
                                                 theta2 = bins[bin_idx + 1]
+                                                
+                                                wedge_color = cmap(intensity)
+                                                
                                                 wedge = Wedge((player_row['x'], player_row['y']), r, theta1, theta2, 
-                                                              facecolor=t_color, alpha=0.7, edgecolor=bg_color, lw=0.5, zorder=3)
+                                                              facecolor=wedge_color, alpha=0.85, edgecolor=bg_color, lw=0.5, zorder=3)
                                                 ax.add_patch(wedge)
                                                 
                                     # Plot center point and name
