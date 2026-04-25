@@ -43,7 +43,7 @@ pip install -r requirements.txt
 
 Start the Streamlit application by running the following command in your terminal:
 ```bash
-streamlit run app.py
+python -m streamlit run app.py
 ```
 
 The dashboard will automatically open in your default web browser at `http://localhost:8501`.
