@@ -105,6 +105,7 @@ with st.sidebar:
     st.divider()
     st.header("2. Settings & Filters")
     time_range = st.slider("Time Range (Minutes)", 0, 120, (0, 90))
+    include_subs = st.checkbox("Include Substitutes", value=False)
     theme = st.selectbox("Map Theme", ["Dark", "Light"])
     node_scale = st.slider("Node Size Scale", 0.5, 3.0, 1.0)
     arrow_scale = st.slider("Arrow Thickness Scale", 0.1, 1.0, 0.4)
@@ -187,15 +188,21 @@ if st.session_state.get('dashboard_active', False):
                         cols = st.columns(2)
                         for i, team in enumerate(teams):
                             team_events = filtered_events[filtered_events['team'] == team].copy()
-                            starters = team_events.groupby('player')['minute'].min().nsmallest(11).index.tolist()
-                            team_events_starters = team_events[team_events['player'].isin(starters)]
                             
-                            avg_locs = team_events_starters.groupby(['player', 'player_id']).agg({'x': 'mean', 'y': 'mean'}).reset_index()
+                            if not include_subs:
+                                starters = team_events.groupby('player')['minute'].min().nsmallest(11).index.tolist()
+                                team_events_selected = team_events[team_events['player'].isin(starters)]
+                                passes_filter = team_events_selected['pass_recipient'].isin(starters)
+                            else:
+                                team_events_selected = team_events
+                                passes_filter = pd.Series(True, index=team_events_selected.index)
                             
-                            team_passes = team_events_starters[
-                                (team_events_starters['type'] == 'Pass') & 
-                                (team_events_starters['outcome_type'] == 'Successful') &
-                                (team_events_starters['pass_recipient'].isin(starters))
+                            avg_locs = team_events_selected.groupby(['player', 'player_id']).agg({'x': 'mean', 'y': 'mean'}).reset_index()
+                            
+                            team_passes = team_events_selected[
+                                (team_events_selected['type'] == 'Pass') & 
+                                (team_events_selected['outcome_type'] == 'Successful') &
+                                passes_filter
                             ].copy()
                             
                             if team_passes.empty:
