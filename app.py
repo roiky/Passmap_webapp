@@ -192,14 +192,16 @@ if st.session_state.get('dashboard_active', False):
                         cols = st.columns(2)
                         for i, team in enumerate(teams):
                             team_events = filtered_events[filtered_events['team'] == team].copy()
+                            
                             if not include_subs:
-                                # Get starters from the FULL events dataframe, not the time-filtered one
-                                starters = events[events['team'] == team].groupby('player')['minute'].min().nsmallest(11).index.tolist()
-                                team_events_selected = team_events[team_events['player'].isin(starters)]
-                                passes_filter = team_events_selected['pass_recipient'].isin(starters)
+                                # Show the 11 players who started this timeframe
+                                selected_players = team_events.groupby('player')['minute'].min().nsmallest(11).index.tolist()
                             else:
-                                team_events_selected = team_events
-                                passes_filter = pd.Series(True, index=team_events_selected.index)
+                                # Show the 11 players who ended this timeframe (substitutes in, replaced players out)
+                                selected_players = team_events.groupby('player')['minute'].max().nlargest(11).index.tolist()
+                                
+                            team_events_selected = team_events[team_events['player'].isin(selected_players)]
+                            passes_filter = team_events_selected['pass_recipient'].isin(selected_players)
                             
                             avg_locs = team_events_selected.groupby(['player', 'player_id']).agg({'x': 'mean', 'y': 'mean'}).reset_index()
                             
@@ -372,9 +374,6 @@ if st.session_state.get('dashboard_active', False):
                                 for i, team in enumerate(teams):
                                     team_events_full = events[events['team'] == team].copy()
                                     
-                                    # Identify full match starters to maintain consistency
-                                    starters = events[events['team'] == team].groupby('player')['minute'].min().nsmallest(11).index.tolist()
-                                    
                                     frames = []
                                     time_intervals = [(0,15), (15,30), (30,45), (45,60), (60,75), (75,95)]
                                     
@@ -388,11 +387,14 @@ if st.session_state.get('dashboard_active', False):
                                         interval_events = team_events_full[(team_events_full['minute'] >= t_start) & (team_events_full['minute'] < t_end)]
                                         
                                         if not include_subs:
-                                            team_events_selected = interval_events[interval_events['player'].isin(starters)]
-                                            passes_filter = team_events_selected['pass_recipient'].isin(starters)
+                                            # 11 players who started the interval
+                                            selected_players = interval_events.groupby('player')['minute'].min().nsmallest(11).index.tolist()
                                         else:
-                                            team_events_selected = interval_events
-                                            passes_filter = pd.Series(True, index=team_events_selected.index)
+                                            # 11 players who ended the interval
+                                            selected_players = interval_events.groupby('player')['minute'].max().nlargest(11).index.tolist()
+                                            
+                                        team_events_selected = interval_events[interval_events['player'].isin(selected_players)]
+                                        passes_filter = team_events_selected['pass_recipient'].isin(selected_players)
                                             
                                         if not team_events_selected.empty:
                                             avg_locs = team_events_selected.groupby(['player', 'player_id']).agg({'x': 'mean', 'y': 'mean'}).reset_index()
