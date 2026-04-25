@@ -173,13 +173,12 @@ if st.session_state.get('dashboard_active', False):
                     st.success(f"**Match Identified:** {home_team} {home_score_full} - {away_score_full} {away_team} ({match_date})")
 
                     # Apply time filter
+                    events['pass_recipient'] = events['player'].shift(-1)
                     filtered_events = events[(events['minute'] >= time_range[0]) & (events['minute'] <= time_range[1])].copy()
                     
                     if filtered_events.empty:
                         st.warning("No events found in the selected time range.")
                         st.stop()
-
-                    filtered_events['pass_recipient'] = filtered_events['player'].shift(-1)
                     
                     # Create Tabs
                     tab_net, tab_shot, tab_heat, tab_stats, tab_anim = st.tabs(["Passing Networks", "Shot Maps", "Heatmaps", "Match Stats", "Animation 🎬"])
