@@ -8,6 +8,8 @@ import logging
 import io
 import numpy as np
 from PIL import Image
+from scipy.spatial import ConvexHull
+from matplotlib.patches import Wedge
 
 st.set_page_config(page_title="⚽ Tactical Dashboard", layout="wide", initial_sidebar_state="expanded")
 
@@ -181,7 +183,9 @@ if st.session_state.get('dashboard_active', False):
                         st.stop()
                     
                     # Create Tabs
-                    tab_net, tab_shot, tab_heat, tab_anim = st.tabs(["Passing Networks", "Shot Maps", "Heatmaps", "Animation 🎬"])
+                    tab_net, tab_shot, tab_heat, tab_sonar, tab_shape, tab_anim = st.tabs([
+                        "Passing Networks", "Shot Maps", "Heatmaps", "Pass Sonars 📡", "Team Shape 🛡️", "Animation 🎬"
+                    ])
                     
                     teams = [home_team, away_team]
                     
@@ -315,7 +319,128 @@ if st.session_state.get('dashboard_active', False):
                             plt.close(fig)
 
                     # -----------------------------------------------------
-                    # TAB 4: ANIMATION
+                    # TAB 4: PASS SONARS
+                    # -----------------------------------------------------
+                    with tab_sonar:
+                        st.subheader(f"Pass Sonars ({time_range[0]}'-{time_range[1]}')")
+                        cols = st.columns(2)
+                        for i, team in enumerate(teams):
+                            fig, ax = plt.subplots(figsize=(8, 5))
+                            fig.set_facecolor(bg_color)
+                            pitch = Pitch(pitch_type='opta', pitch_color=bg_color, line_color=line_color)
+                            pitch.draw(ax=ax)
+                            
+                            team_events = filtered_events[filtered_events['team'] == team].copy()
+                            
+                            if not include_subs:
+                                selected_players = team_events.groupby('player')['minute'].min().nsmallest(11).index.tolist()
+                            else:
+                                selected_players = team_events.groupby('player')['minute'].max().nlargest(11).index.tolist()
+                                
+                            team_events_selected = team_events[team_events['player'].isin(selected_players)]
+                            
+                            # Get successful passes
+                            team_passes = team_events_selected[
+                                (team_events_selected['type'] == 'Pass') & 
+                                (team_events_selected['outcome_type'] == 'Successful')
+                            ].copy()
+                            
+                            if not team_passes.empty and 'end_x' in team_passes.columns and 'end_y' in team_passes.columns:
+                                # Calculate angle in degrees
+                                team_passes['angle'] = np.degrees(np.arctan2(team_passes['end_y'] - team_passes['y'], team_passes['end_x'] - team_passes['x']))
+                                team_passes['angle'] = team_passes['angle'] % 360
+                                
+                                avg_locs = team_passes.groupby('player').agg({'x': 'mean', 'y': 'mean'}).reset_index()
+                                
+                                t_color = TEAM_COLORS.get(team, DEFAULT_COLORS[i])
+                                
+                                for _, player_row in avg_locs.iterrows():
+                                    player_passes = team_passes[team_passes['player'] == player_row['player']]
+                                    
+                                    # Create 8 bins (45 degrees each)
+                                    bins = np.linspace(0, 360, 9)
+                                    counts, _ = np.histogram(player_passes['angle'], bins=bins)
+                                    
+                                    if len(player_passes) > 0:
+                                        # Max radius scaling based on count
+                                        max_count = max(counts)
+                                        base_radius = 5.0 * node_scale
+                                        
+                                        for bin_idx, count in enumerate(counts):
+                                            if count > 0:
+                                                r = base_radius * (count / max_count)
+                                                theta1 = bins[bin_idx]
+                                                theta2 = bins[bin_idx + 1]
+                                                wedge = Wedge((player_row['x'], player_row['y']), r, theta1, theta2, 
+                                                              facecolor=t_color, alpha=0.7, edgecolor=bg_color, lw=0.5, zorder=3)
+                                                ax.add_patch(wedge)
+                                                
+                                    # Plot center point and name
+                                    pitch.scatter(player_row['x'], player_row['y'], s=20, color=bg_color, edgecolors=t_color, zorder=4, ax=ax)
+                                    pitch.annotate(player_row['player'].split(' ')[-1], xy=(player_row['x'], player_row['y'] - 4), 
+                                                   c=text_color, size=8, weight='bold', va='center', ha='center', ax=ax, zorder=5)
+                                    
+                            ax.set_title(f"{team} Pass Sonars", color=text_color, fontsize=16)
+                            cols[i].pyplot(fig)
+                            
+                            buf = io.BytesIO()
+                            fig.savefig(buf, format="png", bbox_inches='tight', facecolor=fig.get_facecolor(), dpi=300)
+                            buf.seek(0)
+                            cols[i].download_button(label=f"Download {team} Sonars", data=buf, file_name=f"{team}_sonars.png", mime="image/png", use_container_width=True)
+                            plt.close(fig)
+
+                    # -----------------------------------------------------
+                    # TAB 5: TEAM SHAPE
+                    # -----------------------------------------------------
+                    with tab_shape:
+                        st.subheader(f"Team Shape - Convex Hull ({time_range[0]}'-{time_range[1]}')")
+                        cols = st.columns(2)
+                        for i, team in enumerate(teams):
+                            fig, ax = plt.subplots(figsize=(8, 5))
+                            fig.set_facecolor(bg_color)
+                            pitch = Pitch(pitch_type='opta', pitch_color=bg_color, line_color=line_color)
+                            pitch.draw(ax=ax)
+                            
+                            team_events = filtered_events[filtered_events['team'] == team].copy()
+                            
+                            if not include_subs:
+                                selected_players = team_events.groupby('player')['minute'].min().nsmallest(11).index.tolist()
+                            else:
+                                selected_players = team_events.groupby('player')['minute'].max().nlargest(11).index.tolist()
+                                
+                            team_events_selected = team_events[team_events['player'].isin(selected_players)]
+                            avg_locs = team_events_selected.groupby('player').agg({'x': 'mean', 'y': 'mean'}).reset_index()
+                            
+                            if not avg_locs.empty and len(avg_locs) > 2:
+                                # Remove GK (lowest X) to show outfield shape
+                                outfield_locs = avg_locs.sort_values('x', ascending=False).head(len(avg_locs) - 1)
+                                
+                                points = outfield_locs[['x', 'y']].values
+                                t_color = TEAM_COLORS.get(team, DEFAULT_COLORS[i])
+                                
+                                if len(points) >= 3:
+                                    hull = ConvexHull(points)
+                                    # mplsoccer expects list of arrays for polygon
+                                    hull_points = points[hull.vertices]
+                                    pitch.polygon([hull_points], ax=ax, facecolor=t_color, alpha=0.3, edgecolor=t_color, lw=2, zorder=2)
+                                    
+                                pitch.scatter(outfield_locs['x'], outfield_locs['y'], s=80, color=t_color, edgecolors=bg_color, lw=1.5, ax=ax, zorder=3)
+                                
+                                for _, row in outfield_locs.iterrows():
+                                    pitch.annotate(row['player'].split(' ')[-1], xy=(row['x'], row['y'] + 4), 
+                                                   c=text_color, size=8, weight='bold', va='center', ha='center', ax=ax, zorder=4)
+                                    
+                            ax.set_title(f"{team} Outfield Shape", color=text_color, fontsize=16)
+                            cols[i].pyplot(fig)
+                            
+                            buf = io.BytesIO()
+                            fig.savefig(buf, format="png", bbox_inches='tight', facecolor=fig.get_facecolor(), dpi=300)
+                            buf.seek(0)
+                            cols[i].download_button(label=f"Download {team} Shape", data=buf, file_name=f"{team}_shape.png", mime="image/png", use_container_width=True)
+                            plt.close(fig)
+
+                    # -----------------------------------------------------
+                    # TAB 6: ANIMATION
                     # -----------------------------------------------------
                     with tab_anim:
                         st.subheader("Time-lapse Passing Network Animation")
