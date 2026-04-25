@@ -1,5 +1,32 @@
 # Tactical Soccer Dashboard ⚽
 
+# 🚨 לרועי: מדריך הפעלה מדויק מ-0 (בלי תקלות!)
+**השגיאה שקיבלת קודם קרתה כי בטעות העתקת גם את התו `>` לטרמינל!**
+כדי לעשות סדר ולגרום לזה לעבוד בצורה חלקה, עשה בדיוק את הצעדים הבאים:
+
+1. פתח טרמינל (PowerShell) וודא שאתה בנתיב הראשי של הפרויקט:
+```powershell
+cd C:\Users\Roei\Desktop\soccer_project
+```
+
+2. הפעל את הסביבה הוירטואלית התקינה שיצרנו בהתחלה:
+```powershell
+.\.venv\Scripts\activate
+```
+
+3. היכנס לתיקייה של האפליקציה:
+```powershell
+cd .venv\web_app
+```
+
+4. עכשיו, פשוט תריץ (תעתיק בלי תווים מיותרים):
+```powershell
+streamlit run app.py
+```
+
+זה הכל! האפליקציה תידלק מיד.
+(ד"א, מומלץ למחוק את התיקייה בשם `.venv` שנמצאת בטעות בתוך `web_app` כדי שהיא לא תעשה לך התנגשויות בעתיד).
+
 A powerful, interactive web application built with Streamlit to analyze football match data dynamically.
 
 ## Features
