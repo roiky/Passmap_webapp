@@ -7,6 +7,7 @@ import matplotlib.patheffects as path_effects
 import logging
 import io
 import numpy as np
+from PIL import Image
 
 st.set_page_config(page_title="⚽ Tactical Dashboard", layout="wide", initial_sidebar_state="expanded")
 
@@ -80,7 +81,11 @@ def fetch_events(match_id, league, season, _log_placeholder):
     
     try:
         ws = sd.WhoScored(leagues=[league], seasons=season)
-        events = ws.read_events(match_id=[int(match_id)])
+        try:
+            # Force cache to prevent downloading 10 months of fixtures every time
+            events = ws.read_events(match_id=[int(match_id)], force_cache=True)
+        except TypeError:
+            events = ws.read_events(match_id=[int(match_id)])
         
         sd_logger.removeHandler(handler)
         return events
@@ -177,7 +182,7 @@ if st.session_state.get('dashboard_active', False):
                     filtered_events['pass_recipient'] = filtered_events['player'].shift(-1)
                     
                     # Create Tabs
-                    tab_net, tab_shot, tab_heat, tab_stats = st.tabs(["Passing Networks", "Shot Maps", "Heatmaps", "Match Stats"])
+                    tab_net, tab_shot, tab_heat, tab_stats, tab_anim = st.tabs(["Passing Networks", "Shot Maps", "Heatmaps", "Match Stats", "Animation 🎬"])
                     
                     teams = [home_team, away_team]
                     
@@ -188,9 +193,9 @@ if st.session_state.get('dashboard_active', False):
                         cols = st.columns(2)
                         for i, team in enumerate(teams):
                             team_events = filtered_events[filtered_events['team'] == team].copy()
-                            
                             if not include_subs:
-                                starters = team_events.groupby('player')['minute'].min().nsmallest(11).index.tolist()
+                                # Get starters from the FULL events dataframe, not the time-filtered one
+                                starters = events[events['team'] == team].groupby('player')['minute'].min().nsmallest(11).index.tolist()
                                 team_events_selected = team_events[team_events['player'].isin(starters)]
                                 passes_filter = team_events_selected['pass_recipient'].isin(starters)
                             else:
@@ -353,3 +358,86 @@ if st.session_state.get('dashboard_active', False):
                                 col1.metric("Goals", stats_data[i]["Goals"])
                                 col2.metric("Shots", stats_data[i]["Shots"])
                                 col3.metric("Total Passes", stats_data[i]["Total Passes"])
+
+                    # -----------------------------------------------------
+                    # TAB 5: ANIMATION
+                    # -----------------------------------------------------
+                    with tab_anim:
+                        st.subheader("Time-lapse Passing Network Animation")
+                        st.markdown("Generates a GIF showing how the passing network evolved every 15 minutes.")
+                        
+                        if st.button("Generate 15-min Time-lapse GIF", key="btn_gif", use_container_width=True):
+                            with st.spinner("Generating animation frames... This takes a few seconds."):
+                                cols = st.columns(2)
+                                
+                                for i, team in enumerate(teams):
+                                    team_events_full = events[events['team'] == team].copy()
+                                    
+                                    # Identify full match starters to maintain consistency
+                                    starters = events[events['team'] == team].groupby('player')['minute'].min().nsmallest(11).index.tolist()
+                                    
+                                    frames = []
+                                    time_intervals = [(0,15), (15,30), (30,45), (45,60), (60,75), (75,95)]
+                                    
+                                    for t_start, t_end in time_intervals:
+                                        fig, ax = plt.subplots(figsize=(8, 5))
+                                        fig.set_facecolor(bg_color)
+                                        pitch = Pitch(pitch_type='opta', pitch_color=bg_color, line_color=line_color)
+                                        pitch.draw(ax=ax)
+                                        
+                                        # Filter events for this interval
+                                        interval_events = team_events_full[(team_events_full['minute'] >= t_start) & (team_events_full['minute'] < t_end)]
+                                        
+                                        if not include_subs:
+                                            team_events_selected = interval_events[interval_events['player'].isin(starters)]
+                                            passes_filter = team_events_selected['pass_recipient'].isin(starters)
+                                        else:
+                                            team_events_selected = interval_events
+                                            passes_filter = pd.Series(True, index=team_events_selected.index)
+                                            
+                                        if not team_events_selected.empty:
+                                            avg_locs = team_events_selected.groupby(['player', 'player_id']).agg({'x': 'mean', 'y': 'mean'}).reset_index()
+                                            
+                                            team_passes = team_events_selected[
+                                                (team_events_selected['type'] == 'Pass') & 
+                                                (team_events_selected['outcome_type'] == 'Successful') &
+                                                passes_filter
+                                            ].copy()
+                                            
+                                            if not team_passes.empty:
+                                                pass_vol = team_passes.groupby('player').size().reset_index(name='pass_count')
+                                                nodes = pd.merge(avg_locs, pass_vol, on='player')
+                                                
+                                                pair_stats = team_passes.groupby(['player', 'pass_recipient']).size().reset_index(name='pair_count')
+                                                top_3 = pair_stats.sort_values(['player', 'pair_count'], ascending=[True, False]).groupby('player').head(3)
+
+                                                for _, row in top_3.iterrows():
+                                                    p = nodes[nodes['player'] == row['player']]
+                                                    r = nodes[nodes['player'] == row['pass_recipient']]
+                                                    if not p.empty and not r.empty:
+                                                        ax.annotate("", xy=(r.x.values[0], r.y.values[0]), xytext=(p.x.values[0], p.y.values[0]),
+                                                                    arrowprops=dict(arrowstyle="-|>", color=text_color, alpha=0.4, shrinkA=8, shrinkB=8, 
+                                                                                    lw=row['pair_count'] * arrow_scale, connectionstyle="arc3,rad=0.1"))
+
+                                                t_color = TEAM_COLORS.get(team, DEFAULT_COLORS[i])
+                                                pitch.scatter(nodes.x, nodes.y, s=nodes.pass_count * 15 * node_scale, color=t_color, edgecolors=text_color, linewidth=1.5, ax=ax, zorder=2)
+                                                
+                                                for _, row in nodes.iterrows():
+                                                    pitch.annotate(row.player.split(' ')[-1], xy=(row.x, row.y + 4), c=text_color, size=7, weight='bold', va='center', ha='center', ax=ax)
+                                                    
+                                        ax.set_title(f"{team} Tactical Network\n{t_start}'-{t_end}'", color=text_color, fontsize=14, pad=10)
+                                        
+                                        # Save frame
+                                        buf = io.BytesIO()
+                                        fig.savefig(buf, format="png", bbox_inches='tight', facecolor=fig.get_facecolor(), dpi=120)
+                                        buf.seek(0)
+                                        frames.append(Image.open(buf))
+                                        plt.close(fig)
+                                        
+                                    if frames:
+                                        gif_buf = io.BytesIO()
+                                        frames[0].save(gif_buf, format='GIF', append_images=frames[1:], save_all=True, duration=1500, loop=0)
+                                        gif_buf.seek(0)
+                                        
+                                        cols[i].image(gif_buf, use_container_width=True)
+                                        cols[i].download_button(label=f"Download {team} Animation", data=gif_buf, file_name=f"{team}_timelapse.gif", mime="image/gif", use_container_width=True, key=f"dl_gif_{team}")
