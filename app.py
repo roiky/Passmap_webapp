@@ -69,8 +69,9 @@ st.markdown("Generate beautiful passing networks, shot maps, and heatmaps using 
 # ==========================================
 # DATA FETCHING FUNCTIONS
 # ==========================================
-def fetch_events(match_id, league, season, log_placeholder):
-    handler = StreamlitLogHandler(log_placeholder)
+@st.cache_data(show_spinner=False)
+def fetch_events(match_id, league, season, _log_placeholder):
+    handler = StreamlitLogHandler(_log_placeholder)
     handler.setFormatter(logging.Formatter('%(message)s'))
     
     sd_logger = logging.getLogger('soccerdata')
@@ -121,12 +122,16 @@ def get_image_download_link(fig, filename="map.png"):
 # MAIN EXECUTION
 # ==========================================
 if generate_btn:
+    st.session_state.dashboard_active = True
+
+if st.session_state.get('dashboard_active', False):
     if not match_id:
         st.error("Please enter a Match ID.")
     else:
         log_placeholder = st.empty()
         
         with st.spinner("Processing match data..."):
+            # Notice the _log_placeholder parameter to avoid hashing issues
             events = fetch_events(match_id, league, season, log_placeholder)
             log_placeholder.empty()
             
