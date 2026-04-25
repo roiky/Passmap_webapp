@@ -181,7 +181,7 @@ if st.session_state.get('dashboard_active', False):
                         st.stop()
                     
                     # Create Tabs
-                    tab_net, tab_shot, tab_heat, tab_stats, tab_anim = st.tabs(["Passing Networks", "Shot Maps", "Heatmaps", "Match Stats", "Animation 🎬"])
+                    tab_net, tab_shot, tab_heat, tab_anim = st.tabs(["Passing Networks", "Shot Maps", "Heatmaps", "Animation 🎬"])
                     
                     teams = [home_team, away_team]
                     
@@ -315,53 +315,7 @@ if st.session_state.get('dashboard_active', False):
                             plt.close(fig)
 
                     # -----------------------------------------------------
-                    # TAB 4: MATCH STATS
-                    # -----------------------------------------------------
-                    with tab_stats:
-                        st.subheader(f"Match Statistics ({time_range[0]}'-{time_range[1]}')")
-                        
-                        stats_data = []
-                        for team in teams:
-                            team_events = filtered_events[filtered_events['team'] == team]
-                            
-                            passes = team_events[team_events['type'] == 'Pass']
-                            total_passes = len(passes)
-                            succ_passes = len(passes[passes['outcome_type'] == 'Successful'])
-                            pass_pct = round((succ_passes / total_passes * 100), 1) if total_passes > 0 else 0
-                            
-                            if 'is_shot' in team_events.columns:
-                                shots = len(team_events[team_events['is_shot'] == True])
-                            else:
-                                shots = len(team_events[team_events['type'].isin(['SavedShot', 'MissedShots', 'Goal', 'ShotOnPost'])])
-                                
-                            goals = len(team_events[team_events['is_goal'] == True])
-                            
-                            fouls = len(team_events[team_events['type'] == 'Foul'])
-                            
-                            stats_data.append({
-                                "Team": team,
-                                "Goals": goals,
-                                "Shots": shots,
-                                "Total Passes": total_passes,
-                                "Pass Completion": f"{pass_pct}%",
-                                "Fouls": fouls
-                            })
-                            
-                        stats_df = pd.DataFrame(stats_data)
-                        st.dataframe(stats_df, use_container_width=True, hide_index=True)
-                        
-                        # Add quick metric cards
-                        cols = st.columns(2)
-                        for i, team in enumerate(teams):
-                            with cols[i]:
-                                st.markdown(f"### {team}")
-                                col1, col2, col3 = st.columns(3)
-                                col1.metric("Goals", stats_data[i]["Goals"])
-                                col2.metric("Shots", stats_data[i]["Shots"])
-                                col3.metric("Total Passes", stats_data[i]["Total Passes"])
-
-                    # -----------------------------------------------------
-                    # TAB 5: ANIMATION
+                    # TAB 4: ANIMATION
                     # -----------------------------------------------------
                     with tab_anim:
                         st.subheader("Time-lapse Passing Network Animation")
