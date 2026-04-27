@@ -113,6 +113,7 @@ with st.sidebar:
     st.header("2. Settings & Filters")
     time_range = st.slider("Time Range (Minutes)", 0, 120, (0, 90))
     include_subs = st.checkbox("Include Substitutes", value=False)
+    mirror_away = st.checkbox("Mirror Away Team (Right to Left)", value=True)
     theme = st.selectbox("Map Theme", ["Dark", "Light"])
     node_scale = st.slider("Node Size Scale", 0.5, 3.0, 1.0)
     arrow_scale = st.slider("Arrow Thickness Scale", 0.1, 1.0, 0.4)
@@ -168,6 +169,15 @@ if st.session_state.get('dashboard_active', False):
                         home_team, away_team = unique_teams_in_data[0], unique_teams_in_data[1]
                     else:
                         home_team, away_team = unique_teams_in_data[1], unique_teams_in_data[0]
+
+                    if mirror_away:
+                        away_mask = events['team'] == away_team
+                        events.loc[away_mask, 'x'] = 100 - events.loc[away_mask, 'x']
+                        events.loc[away_mask, 'y'] = 100 - events.loc[away_mask, 'y']
+                        if 'end_x' in events.columns:
+                            events.loc[away_mask, 'end_x'] = 100 - events.loc[away_mask, 'end_x']
+                        if 'end_y' in events.columns:
+                            events.loc[away_mask, 'end_y'] = 100 - events.loc[away_mask, 'end_y']
 
                     # Basic filtering for total match score before time filter
                     home_score_full = len(events[(events['team'] == home_team) & (events['is_goal'] == True)])
@@ -313,8 +323,11 @@ if st.session_state.get('dashboard_active', False):
                                     pitch.hexbin(team_events.x, team_events.y, ax=ax, edgecolors=bg_color, gridsize=(10, 5), cmap='plasma', alpha=0.8)
                                     
                             # Add direction of attack arrow
-                            # Opta pitches go from X=0 to X=100. Teams always attack left-to-right.
-                            ax.annotate("Attack Direction", xy=(70, 102), xytext=(30, 102),
+                            is_mirrored = mirror_away and (team == away_team)
+                            arrow_xy = (30, 102) if is_mirrored else (70, 102)
+                            arrow_xytext = (70, 102) if is_mirrored else (30, 102)
+                            
+                            ax.annotate("Attack Direction", xy=arrow_xy, xytext=arrow_xytext,
                                         arrowprops=dict(arrowstyle="->", color=text_color, lw=2),
                                         color=text_color, ha='center', va='center', fontsize=12, weight='bold', annotation_clip=False)
                             
