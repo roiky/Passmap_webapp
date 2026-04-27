@@ -311,6 +311,12 @@ if st.session_state.get('dashboard_active', False):
                                 except Exception as e:
                                     # Fallback if seaborn/scipy is missing
                                     pitch.hexbin(team_events.x, team_events.y, ax=ax, edgecolors=bg_color, gridsize=(10, 5), cmap='plasma', alpha=0.8)
+                                    
+                            # Add direction of attack arrow
+                            # Opta pitches go from X=0 to X=100. Teams always attack left-to-right.
+                            ax.annotate("Attack Direction", xy=(70, 102), xytext=(30, 102),
+                                        arrowprops=dict(arrowstyle="->", color=text_color, lw=2),
+                                        color=text_color, ha='center', va='center', fontsize=12, weight='bold', annotation_clip=False)
                             
                             ax.set_title(f"{team} Action Heatmap\n{time_range[0]}'-{time_range[1]}'", color=text_color, fontsize=16, pad=10)
                             cols[i].pyplot(fig)
