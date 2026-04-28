@@ -87,7 +87,8 @@ def fetch_events(match_id, league, season, _log_placeholder):
         try:
             # Force cache to prevent downloading 10 months of fixtures every time
             events = ws.read_events(match_id=[int(match_id)], force_cache=True)
-        except TypeError:
+        except Exception:
+            # If not in cache or other error, fetch it explicitly
             events = ws.read_events(match_id=[int(match_id)])
         
         sd_logger.removeHandler(handler)
