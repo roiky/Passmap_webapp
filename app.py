@@ -10,6 +10,7 @@ import numpy as np
 from PIL import Image
 from scipy.spatial import ConvexHull
 from matplotlib.patches import Wedge
+import zipfile
 
 st.set_page_config(page_title="⚽ Tactical Dashboard", layout="wide", initial_sidebar_state="expanded")
 
@@ -104,7 +105,7 @@ with st.sidebar:
     league = st.selectbox("League", [
         'ENG-Premier League', 'ESP-La Liga', 'FRA-Ligue 1', 
         'GER-Bundesliga', 'ITA-Serie A', 'INT-UEFA Champions League', 
-        'INT-Europa League', 'ISR-Ligat HaAl'
+        'INT-Europa League', 'INT-World Cup'
     ], index=1)
     season = st.text_input("Season", "2526")
     match_id = st.text_input("Match ID (WhoScored)", "1914207")
@@ -183,6 +184,9 @@ if st.session_state.get('dashboard_active', False):
                     home_score_full = len(events[(events['team'] == home_team) & (events['is_goal'] == True)])
                     away_score_full = len(events[(events['team'] == away_team) & (events['is_goal'] == True)])
                     st.success(f"**Match Identified:** {home_team} {home_score_full} - {away_score_full} {away_team} ({match_date})")
+                    
+                    zip_download_placeholder = st.empty()
+                    zip_images = {}
 
                     # Apply time filter
                     events['pass_recipient'] = events['player'].shift(-1)
@@ -259,7 +263,9 @@ if st.session_state.get('dashboard_active', False):
                             
                             cols[i].pyplot(fig)
                             img_buf = get_image_download_link(fig)
-                            cols[i].download_button(label=f"Download {team} Network", data=img_buf, file_name=f"{team}_network.png", mime="image/png", use_container_width=True)
+                            file_name = f"{team}_{match_id}_network.png"
+                            cols[i].download_button(label=f"Download {team} Network", data=img_buf, file_name=file_name, mime="image/png", use_container_width=True)
+                            zip_images[file_name] = img_buf.getvalue()
                             plt.close(fig)
 
                     # -----------------------------------------------------
@@ -299,7 +305,9 @@ if st.session_state.get('dashboard_active', False):
                             ax.set_title(f"{team} Shots\n{time_range[0]}'-{time_range[1]}'", color=text_color, fontsize=16, pad=10)
                             cols[i].pyplot(fig)
                             img_buf = get_image_download_link(fig)
-                            cols[i].download_button(label=f"Download {team} Shots", data=img_buf, file_name=f"{team}_shots.png", mime="image/png", use_container_width=True)
+                            file_name = f"{team}_{match_id}_shots.png"
+                            cols[i].download_button(label=f"Download {team} Shots", data=img_buf, file_name=file_name, mime="image/png", use_container_width=True)
+                            zip_images[file_name] = img_buf.getvalue()
                             plt.close(fig)
 
                     # -----------------------------------------------------
@@ -334,7 +342,9 @@ if st.session_state.get('dashboard_active', False):
                             ax.set_title(f"{team} Action Heatmap\n{time_range[0]}'-{time_range[1]}'", color=text_color, fontsize=16, pad=10)
                             cols[i].pyplot(fig)
                             img_buf = get_image_download_link(fig)
-                            cols[i].download_button(label=f"Download {team} Heatmap", data=img_buf, file_name=f"{team}_heatmap.png", mime="image/png", use_container_width=True)
+                            file_name = f"{team}_{match_id}_heatmap.png"
+                            cols[i].download_button(label=f"Download {team} Heatmap", data=img_buf, file_name=file_name, mime="image/png", use_container_width=True)
+                            zip_images[file_name] = img_buf.getvalue()
                             plt.close(fig)
 
                     # -----------------------------------------------------
@@ -414,7 +424,9 @@ if st.session_state.get('dashboard_active', False):
                             buf = io.BytesIO()
                             fig.savefig(buf, format="png", bbox_inches='tight', facecolor=fig.get_facecolor(), dpi=300)
                             buf.seek(0)
-                            cols[i].download_button(label=f"Download {team} Sonars", data=buf, file_name=f"{team}_sonars.png", mime="image/png", use_container_width=True)
+                            file_name = f"{team}_{match_id}_sonars.png"
+                            cols[i].download_button(label=f"Download {team} Sonars", data=buf, file_name=file_name, mime="image/png", use_container_width=True)
+                            zip_images[file_name] = buf.getvalue()
                             plt.close(fig)
 
                     # -----------------------------------------------------
@@ -464,7 +476,9 @@ if st.session_state.get('dashboard_active', False):
                             buf = io.BytesIO()
                             fig.savefig(buf, format="png", bbox_inches='tight', facecolor=fig.get_facecolor(), dpi=300)
                             buf.seek(0)
-                            cols[i].download_button(label=f"Download {team} Shape", data=buf, file_name=f"{team}_shape.png", mime="image/png", use_container_width=True)
+                            file_name = f"{team}_{match_id}_shape.png"
+                            cols[i].download_button(label=f"Download {team} Shape", data=buf, file_name=file_name, mime="image/png", use_container_width=True)
+                            zip_images[file_name] = buf.getvalue()
                             plt.close(fig)
 
                     # -----------------------------------------------------
@@ -474,78 +488,96 @@ if st.session_state.get('dashboard_active', False):
                         st.subheader("Time-lapse Passing Network Animation")
                         st.markdown("Generates a GIF showing how the passing network evolved every 15 minutes.")
                         
-                        if st.button("Generate 15-min Time-lapse GIF", key="btn_gif", use_container_width=True):
-                            with st.spinner("Generating animation frames... This takes a few seconds."):
-                                cols = st.columns(2)
+                        with st.spinner("Generating animation frames... This takes a few seconds."):
+                            cols = st.columns(2)
+                            for i, team in enumerate(teams):
+                                team_events_full = events[events['team'] == team].copy()
                                 
-                                for i, team in enumerate(teams):
-                                    team_events_full = events[events['team'] == team].copy()
+                                frames = []
+                                time_intervals = [(0,15), (15,30), (30,45), (45,60), (60,75), (75,95)]
+                                
+                                for t_start, t_end in time_intervals:
+                                    fig, ax = plt.subplots(figsize=(8, 5))
+                                    fig.set_facecolor(bg_color)
+                                    pitch = Pitch(pitch_type='opta', pitch_color=bg_color, line_color=line_color)
+                                    pitch.draw(ax=ax)
                                     
-                                    frames = []
-                                    time_intervals = [(0,15), (15,30), (30,45), (45,60), (60,75), (75,95)]
+                                    # Filter events for this interval
+                                    interval_events = team_events_full[(team_events_full['minute'] >= t_start) & (team_events_full['minute'] < t_end)]
                                     
-                                    for t_start, t_end in time_intervals:
-                                        fig, ax = plt.subplots(figsize=(8, 5))
-                                        fig.set_facecolor(bg_color)
-                                        pitch = Pitch(pitch_type='opta', pitch_color=bg_color, line_color=line_color)
-                                        pitch.draw(ax=ax)
+                                    if not include_subs:
+                                        # 11 players who started the interval
+                                        selected_players = interval_events.groupby('player')['minute'].min().nsmallest(11).index.tolist()
+                                    else:
+                                        # 11 players who ended the interval
+                                        selected_players = interval_events.groupby('player')['minute'].max().nlargest(11).index.tolist()
                                         
-                                        # Filter events for this interval
-                                        interval_events = team_events_full[(team_events_full['minute'] >= t_start) & (team_events_full['minute'] < t_end)]
+                                    team_events_selected = interval_events[interval_events['player'].isin(selected_players)]
+                                    passes_filter = team_events_selected['pass_recipient'].isin(selected_players)
                                         
-                                        if not include_subs:
-                                            # 11 players who started the interval
-                                            selected_players = interval_events.groupby('player')['minute'].min().nsmallest(11).index.tolist()
-                                        else:
-                                            # 11 players who ended the interval
-                                            selected_players = interval_events.groupby('player')['minute'].max().nlargest(11).index.tolist()
+                                    if not team_events_selected.empty:
+                                        avg_locs = team_events_selected.groupby(['player', 'player_id']).agg({'x': 'mean', 'y': 'mean'}).reset_index()
+                                        
+                                        team_passes = team_events_selected[
+                                            (team_events_selected['type'] == 'Pass') & 
+                                            (team_events_selected['outcome_type'] == 'Successful') &
+                                            passes_filter
+                                        ].copy()
+                                        
+                                        if not team_passes.empty:
+                                            pass_vol = team_passes.groupby('player').size().reset_index(name='pass_count')
+                                            nodes = pd.merge(avg_locs, pass_vol, on='player')
                                             
-                                        team_events_selected = interval_events[interval_events['player'].isin(selected_players)]
-                                        passes_filter = team_events_selected['pass_recipient'].isin(selected_players)
-                                            
-                                        if not team_events_selected.empty:
-                                            avg_locs = team_events_selected.groupby(['player', 'player_id']).agg({'x': 'mean', 'y': 'mean'}).reset_index()
-                                            
-                                            team_passes = team_events_selected[
-                                                (team_events_selected['type'] == 'Pass') & 
-                                                (team_events_selected['outcome_type'] == 'Successful') &
-                                                passes_filter
-                                            ].copy()
-                                            
-                                            if not team_passes.empty:
-                                                pass_vol = team_passes.groupby('player').size().reset_index(name='pass_count')
-                                                nodes = pd.merge(avg_locs, pass_vol, on='player')
-                                                
-                                                pair_stats = team_passes.groupby(['player', 'pass_recipient']).size().reset_index(name='pair_count')
-                                                top_3 = pair_stats.sort_values(['player', 'pair_count'], ascending=[True, False]).groupby('player').head(3)
+                                            pair_stats = team_passes.groupby(['player', 'pass_recipient']).size().reset_index(name='pair_count')
+                                            top_3 = pair_stats.sort_values(['player', 'pair_count'], ascending=[True, False]).groupby('player').head(3)
 
-                                                for _, row in top_3.iterrows():
-                                                    p = nodes[nodes['player'] == row['player']]
-                                                    r = nodes[nodes['player'] == row['pass_recipient']]
-                                                    if not p.empty and not r.empty:
-                                                        ax.annotate("", xy=(r.x.values[0], r.y.values[0]), xytext=(p.x.values[0], p.y.values[0]),
-                                                                    arrowprops=dict(arrowstyle="-|>", color=text_color, alpha=0.4, shrinkA=8, shrinkB=8, 
-                                                                                    lw=row['pair_count'] * arrow_scale, connectionstyle="arc3,rad=0.1"))
+                                            for _, row in top_3.iterrows():
+                                                p = nodes[nodes['player'] == row['player']]
+                                                r = nodes[nodes['player'] == row['pass_recipient']]
+                                                if not p.empty and not r.empty:
+                                                    ax.annotate("", xy=(r.x.values[0], r.y.values[0]), xytext=(p.x.values[0], p.y.values[0]),
+                                                                arrowprops=dict(arrowstyle="-|>", color=text_color, alpha=0.4, shrinkA=8, shrinkB=8, 
+                                                                                lw=row['pair_count'] * arrow_scale, connectionstyle="arc3,rad=0.1"))
 
-                                                t_color = TEAM_COLORS.get(team, DEFAULT_COLORS[i])
-                                                pitch.scatter(nodes.x, nodes.y, s=nodes.pass_count * 15 * node_scale, color=t_color, edgecolors=text_color, linewidth=1.5, ax=ax, zorder=2)
+                                            t_color = TEAM_COLORS.get(team, DEFAULT_COLORS[i])
+                                            pitch.scatter(nodes.x, nodes.y, s=nodes.pass_count * 15 * node_scale, color=t_color, edgecolors=text_color, linewidth=1.5, ax=ax, zorder=2)
+                                            
+                                            for _, row in nodes.iterrows():
+                                                pitch.annotate(row.player.split(' ')[-1], xy=(row.x, row.y + 4), c=text_color, size=7, weight='bold', va='center', ha='center', ax=ax)
                                                 
-                                                for _, row in nodes.iterrows():
-                                                    pitch.annotate(row.player.split(' ')[-1], xy=(row.x, row.y + 4), c=text_color, size=7, weight='bold', va='center', ha='center', ax=ax)
-                                                    
-                                        ax.set_title(f"{team} Tactical Network\n{t_start}'-{t_end}'", color=text_color, fontsize=14, pad=10)
-                                        
-                                        # Save frame
-                                        buf = io.BytesIO()
-                                        fig.savefig(buf, format="png", bbox_inches='tight', facecolor=fig.get_facecolor(), dpi=120)
-                                        buf.seek(0)
-                                        frames.append(Image.open(buf))
-                                        plt.close(fig)
-                                        
-                                    if frames:
-                                        gif_buf = io.BytesIO()
-                                        frames[0].save(gif_buf, format='GIF', append_images=frames[1:], save_all=True, duration=1500, loop=0)
-                                        gif_buf.seek(0)
-                                        
-                                        cols[i].image(gif_buf, use_container_width=True)
-                                        cols[i].download_button(label=f"Download {team} Animation", data=gif_buf, file_name=f"{team}_timelapse.gif", mime="image/gif", use_container_width=True, key=f"dl_gif_{team}")
+                                    ax.set_title(f"{team} Tactical Network\n{t_start}'-{t_end}'", color=text_color, fontsize=14, pad=10)
+                                    
+                                    # Save frame
+                                    buf = io.BytesIO()
+                                    fig.savefig(buf, format="png", bbox_inches='tight', facecolor=fig.get_facecolor(), dpi=120)
+                                    buf.seek(0)
+                                    frames.append(Image.open(buf))
+                                    plt.close(fig)
+                                    
+                                if frames:
+                                    gif_buf = io.BytesIO()
+                                    frames[0].save(gif_buf, format='GIF', append_images=frames[1:], save_all=True, duration=1500, loop=0)
+                                    gif_buf.seek(0)
+                                    
+                                    file_name = f"{team}_{match_id}_timelapse.gif"
+                                    cols[i].image(gif_buf, use_container_width=True)
+                                    cols[i].download_button(label=f"Download {team} Animation", data=gif_buf, file_name=file_name, mime="image/gif", use_container_width=True, key=f"dl_gif_{team}")
+                                    zip_images[file_name] = gif_buf.getvalue()
+
+                    # Generate ZIP Download button in placeholder
+                    if zip_images:
+                        zip_buffer = io.BytesIO()
+                        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+                            for filename, img_bytes in zip_images.items():
+                                zip_file.writestr(filename, img_bytes)
+                        zip_buffer.seek(0)
+                        
+                        with zip_download_placeholder:
+                            st.download_button(
+                                label="📦 Download All Maps (ZIP)",
+                                data=zip_buffer,
+                                file_name=f"Match_{match_id}_Tactical_Maps.zip",
+                                mime="application/zip",
+                                use_container_width=True,
+                                type="primary"
+                            )
