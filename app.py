@@ -285,7 +285,8 @@ if st.session_state.get('dashboard_active', False):
 
                             fig, ax = plt.subplots(figsize=(10, 7))
                             fig.set_facecolor(bg_color)
-                            pitch = Pitch(pitch_type='opta', pitch_color=bg_color, line_color=line_color, half=True)
+                            # Use full pitch because mirrored away team shots are on the left side (X=0 to 50)
+                            pitch = Pitch(pitch_type='opta', pitch_color=bg_color, line_color=line_color)
                             pitch.draw(ax=ax)
                             
                             if shots.empty:
@@ -560,10 +561,24 @@ if st.session_state.get('dashboard_active', False):
                                     frames[0].save(gif_buf, format='GIF', append_images=frames[1:], save_all=True, duration=1500, loop=0)
                                     gif_buf.seek(0)
                                     
-                                    file_name = f"{team}_{match_id}_timelapse.gif"
+                                    file_name_gif = f"{team}_{match_id}_timelapse.gif"
+                                    file_name_mp4 = f"{team}_{match_id}_timelapse.mp4"
                                     cols[i].image(gif_buf, use_container_width=True)
-                                    cols[i].download_button(label=f"Download {team} Animation", data=gif_buf, file_name=file_name, mime="image/gif", use_container_width=True, key=f"dl_gif_{team}")
-                                    zip_images[file_name] = gif_buf.getvalue()
+                                    
+                                    dl_cols = cols[i].columns(2)
+                                    dl_cols[0].download_button(label=f"Download GIF", data=gif_buf, file_name=file_name_gif, mime="image/gif", use_container_width=True, key=f"dl_gif_{team}")
+                                    zip_images[file_name_gif] = gif_buf.getvalue()
+                                    
+                                    try:
+                                        import imageio.v3 as iio
+                                        mp4_buf = io.BytesIO()
+                                        np_frames = [np.array(frame) for frame in frames]
+                                        iio.imwrite(mp4_buf, np_frames, extension='.mp4', plugin='FFMPEG', fps=1)
+                                        mp4_buf.seek(0)
+                                        dl_cols[1].download_button(label=f"Download MP4", data=mp4_buf, file_name=file_name_mp4, mime="video/mp4", use_container_width=True, key=f"dl_mp4_{team}")
+                                        zip_images[file_name_mp4] = mp4_buf.getvalue()
+                                    except Exception as e:
+                                        dl_cols[1].error("Could not generate MP4")
 
                     # Generate ZIP Download button in placeholder
                     if zip_images:
