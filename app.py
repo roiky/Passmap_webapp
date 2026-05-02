@@ -492,11 +492,12 @@ if st.session_state.get('dashboard_active', False):
                         
                         with st.spinner("Generating animation frames... This takes a few seconds."):
                             cols = st.columns(2)
+                            team_frames = {}
+                            time_intervals = [(0,15), (15,30), (30,45), (45,60), (60,75), (75,95)]
+                            
                             for i, team in enumerate(teams):
                                 team_events_full = events[events['team'] == team].copy()
-                                
                                 frames = []
-                                time_intervals = [(0,15), (15,30), (30,45), (45,60), (60,75), (75,95)]
                                 
                                 for t_start, t_end in time_intervals:
                                     fig, ax = plt.subplots(figsize=(8, 5))
@@ -504,14 +505,11 @@ if st.session_state.get('dashboard_active', False):
                                     pitch = Pitch(pitch_type='opta', pitch_color=bg_color, line_color=line_color)
                                     pitch.draw(ax=ax)
                                     
-                                    # Filter events for this interval
                                     interval_events = team_events_full[(team_events_full['minute'] >= t_start) & (team_events_full['minute'] < t_end)]
                                     
                                     if not include_subs:
-                                        # 11 players who started the interval
                                         selected_players = interval_events.groupby('player')['minute'].min().nsmallest(11).index.tolist()
                                     else:
-                                        # 11 players who ended the interval
                                         selected_players = interval_events.groupby('player')['minute'].max().nlargest(11).index.tolist()
                                         
                                     team_events_selected = interval_events[interval_events['player'].isin(selected_players)]
@@ -548,37 +546,86 @@ if st.session_state.get('dashboard_active', False):
                                                 pitch.annotate(row.player.split(' ')[-1], xy=(row.x, row.y + 4), c=text_color, size=7, weight='bold', va='center', ha='center', ax=ax)
                                                 
                                     ax.set_title(f"{team} Tactical Network\n{t_start}'-{t_end}'", color=text_color, fontsize=14, pad=10)
-                                    
-                                    # Save frame
+                                
+                                    # Save frame safely
                                     buf = io.BytesIO()
-                                    fig.savefig(buf, format="png", bbox_inches='tight', facecolor=fig.get_facecolor(), dpi=120)
+                                    fig.savefig(buf, format="png", bbox_inches='tight', facecolor=fig.get_facecolor(), dpi=100)
                                     buf.seek(0)
-                                    frames.append(Image.open(buf))
+                                    img = Image.open(buf).convert('RGB')
+                                    frames.append(img)
                                     plt.close(fig)
                                     
+                                team_frames[team] = frames
+                                
                                 if frames:
                                     gif_buf = io.BytesIO()
                                     frames[0].save(gif_buf, format='GIF', append_images=frames[1:], save_all=True, duration=1500, loop=0)
-                                    gif_buf.seek(0)
+                                    gif_bytes = gif_buf.getvalue()
                                     
                                     file_name_gif = f"{team}_{match_id}_timelapse.gif"
                                     file_name_mp4 = f"{team}_{match_id}_timelapse.mp4"
-                                    cols[i].image(gif_buf, use_container_width=True)
+                                    
+                                    cols[i].image(gif_bytes, use_container_width=True)
                                     
                                     dl_cols = cols[i].columns(2)
-                                    dl_cols[0].download_button(label=f"Download GIF", data=gif_buf, file_name=file_name_gif, mime="image/gif", use_container_width=True, key=f"dl_gif_{team}")
-                                    zip_images[file_name_gif] = gif_buf.getvalue()
+                                    dl_cols[0].download_button(label="Download GIF", data=gif_bytes, file_name=file_name_gif, mime="image/gif", use_container_width=True, key=f"dl_gif_{team}")
+                                    zip_images[file_name_gif] = gif_bytes
                                     
                                     try:
                                         import imageio.v3 as iio
                                         mp4_buf = io.BytesIO()
-                                        np_frames = [np.array(frame) for frame in frames]
-                                        iio.imwrite(mp4_buf, np_frames, extension='.mp4', plugin='FFMPEG', fps=1)
+                                        
+                                        # To ensure video players don't cut off short/low-fps videos,
+                                        # we duplicate frames to achieve 10 fps. 
+                                        # 15 frames @ 10 fps = 1.5 seconds per image (matches GIF duration=1500)
+                                        np_frames_expanded = []
+                                        for frame in frames:
+                                            np_frame = np.array(frame)
+                                            for _ in range(15):
+                                                np_frames_expanded.append(np_frame)
+                                                
+                                        iio.imwrite(mp4_buf, np_frames_expanded, extension='.mp4', plugin='FFMPEG', fps=10)
                                         mp4_buf.seek(0)
-                                        dl_cols[1].download_button(label=f"Download MP4", data=mp4_buf, file_name=file_name_mp4, mime="video/mp4", use_container_width=True, key=f"dl_mp4_{team}")
+                                        dl_cols[1].download_button(label="Download MP4", data=mp4_buf, file_name=file_name_mp4, mime="video/mp4", use_container_width=True, key=f"dl_mp4_{team}")
                                         zip_images[file_name_mp4] = mp4_buf.getvalue()
                                     except Exception as e:
                                         dl_cols[1].error("Could not generate MP4")
+
+                            # After rendering both teams, offer combined MP4
+                            if len(team_frames) == 2 and len(team_frames[teams[0]]) == len(team_frames[teams[1]]):
+                                frames_combined = []
+                                for f0, f1 in zip(team_frames[teams[0]], team_frames[teams[1]]):
+                                    combined = Image.new('RGB', (f0.width + f1.width, max(f0.height, f1.height)))
+                                    combined.paste(f0, (0, 0))
+                                    combined.paste(f1, (f0.width, 0))
+                                    frames_combined.append(combined)
+                                
+                                try:
+                                    import imageio.v3 as iio
+                                    mp4_buf = io.BytesIO()
+                                    
+                                    # Duplicate frames for 10 fps smooth playback (1.5s per image)
+                                    np_frames_expanded = []
+                                    for frame in frames_combined:
+                                        np_frame = np.array(frame)
+                                        for _ in range(15):
+                                            np_frames_expanded.append(np_frame)
+                                            
+                                    iio.imwrite(mp4_buf, np_frames_expanded, extension='.mp4', plugin='FFMPEG', fps=10)
+                                    mp4_buf.seek(0)
+                                    
+                                    st.markdown("---")
+                                    st.download_button(
+                                        label="📽️ Download Combined MP4 (Side-by-Side)", 
+                                        data=mp4_buf, 
+                                        file_name=f"Match_{match_id}_Combined_Timelapse.mp4", 
+                                        mime="video/mp4",
+                                        use_container_width=True,
+                                        key="dl_mp4_combined_bottom"
+                                    )
+                                    zip_images[f"Match_{match_id}_Combined_Timelapse.mp4"] = mp4_buf.getvalue()
+                                except Exception as e:
+                                    st.error("Could not generate combined MP4")
 
                     # Generate ZIP Download button in placeholder
                     if zip_images:
