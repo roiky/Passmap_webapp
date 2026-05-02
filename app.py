@@ -11,6 +11,8 @@ from PIL import Image
 from scipy.spatial import ConvexHull
 from matplotlib.patches import Wedge
 import zipfile
+import threading
+from streamlit.runtime.scriptrunner import add_script_run_ctx
 
 st.set_page_config(page_title="⚽ Tactical Dashboard", layout="wide", initial_sidebar_state="expanded")
 
@@ -66,6 +68,135 @@ TEAM_COLORS = {
  'Celtic': '#008000', 'Galatasaray': '#a32638'
 }
 DEFAULT_COLORS = ['#ff0000', '#0053a0'] 
+
+def generate_full_video_worker(match_id, teams, events, include_subs, bg_color, line_color, text_color, node_scale, arrow_scale):
+    st.session_state[f'full_vid_status_{match_id}'] = 'running'
+    st.session_state[f'full_vid_prog_{match_id}'] = 0.0
+    
+    max_minute = min(105, int(events['minute'].max()))
+    minutes_list = list(range(15, max_minute + 1))
+    total_frames = len(minutes_list)
+    
+    frames_team0 = []
+    frames_team1 = []
+    frames_combined = []
+    
+    try:
+        import imageio.v3 as iio
+        import pandas as pd
+        
+        for idx, m in enumerate(minutes_list):
+            t_start = m - 15
+            t_end = m
+            
+            fig_comb, axes = plt.subplots(1, 2, figsize=(14, 5))
+            fig_comb.set_facecolor(bg_color)
+            
+            fig0, ax0 = plt.subplots(figsize=(8, 5))
+            fig0.set_facecolor(bg_color)
+            fig1, ax1 = plt.subplots(figsize=(8, 5))
+            fig1.set_facecolor(bg_color)
+            
+            ax_inds = [ax0, ax1]
+            fig_inds = [fig0, fig1]
+            frame_imgs = []
+            
+            for i, team in enumerate(teams):
+                ax_comb = axes[i]
+                ax_ind = ax_inds[i]
+                fig_ind = fig_inds[i]
+                
+                pitch = Pitch(pitch_type='opta', pitch_color=bg_color, line_color=line_color)
+                pitch.draw(ax=ax_comb)
+                pitch.draw(ax=ax_ind)
+                
+                team_events_full = events[events['team'] == team]
+                interval_events = team_events_full[(team_events_full['minute'] >= t_start) & (team_events_full['minute'] < t_end)]
+                
+                if not interval_events.empty:
+                    if not include_subs:
+                        selected_players = interval_events.groupby('player')['minute'].min().nsmallest(11).index.tolist()
+                    else:
+                        selected_players = interval_events.groupby('player')['minute'].max().nlargest(11).index.tolist()
+                        
+                    team_events_selected = interval_events[interval_events['player'].isin(selected_players)]
+                    passes_filter = team_events_selected['pass_recipient'].isin(selected_players)
+                        
+                    if not team_events_selected.empty:
+                        avg_locs = team_events_selected.groupby(['player', 'player_id']).agg({'x': 'mean', 'y': 'mean'}).reset_index()
+                        team_passes = team_events_selected[
+                            (team_events_selected['type'] == 'Pass') & 
+                            (team_events_selected['outcome_type'] == 'Successful') &
+                            passes_filter
+                        ].copy()
+                        
+                        if not team_passes.empty:
+                            pass_vol = team_passes.groupby('player').size().reset_index(name='pass_count')
+                            nodes = pd.merge(avg_locs, pass_vol, on='player')
+                            
+                            pair_stats = team_passes.groupby(['player', 'pass_recipient']).size().reset_index(name='pair_count')
+                            top_3 = pair_stats.sort_values(['player', 'pair_count'], ascending=[True, False]).groupby('player').head(3)
+
+                            for _, row in top_3.iterrows():
+                                p = nodes[nodes['player'] == row['player']]
+                                r = nodes[nodes['player'] == row['pass_recipient']]
+                                if not p.empty and not r.empty:
+                                    for target_ax in [ax_comb, ax_ind]:
+                                        target_ax.annotate("", xy=(r.x.values[0], r.y.values[0]), xytext=(p.x.values[0], p.y.values[0]),
+                                                    arrowprops=dict(arrowstyle="-|>", color=text_color, alpha=0.4, shrinkA=8, shrinkB=8, 
+                                                                    lw=row['pair_count'] * arrow_scale, connectionstyle="arc3,rad=0.1"))
+
+                            t_color = TEAM_COLORS.get(team, DEFAULT_COLORS[i])
+                            for target_ax in [ax_comb, ax_ind]:
+                                pitch.scatter(nodes.x, nodes.y, s=nodes.pass_count * 15 * node_scale, color=t_color, edgecolors=text_color, linewidth=1.5, ax=target_ax, zorder=2)
+                                for _, row in nodes.iterrows():
+                                    pitch.annotate(row.player.split(' ')[-1], xy=(row.x, row.y + 4), c=text_color, size=7, weight='bold', va='center', ha='center', ax=target_ax)
+                
+                title = f"{team} Tactical Network\n{t_start}'-{t_end}'"
+                ax_comb.set_title(title, color=text_color, fontsize=14, pad=10)
+                ax_ind.set_title(title, color=text_color, fontsize=14, pad=10)
+                
+                buf = io.BytesIO()
+                fig_ind.savefig(buf, format="png", bbox_inches='tight', facecolor=fig_ind.get_facecolor(), dpi=100)
+                buf.seek(0)
+                frame_imgs.append(Image.open(buf).convert('RGB'))
+                plt.close(fig_ind)
+            
+            frames_team0.append(frame_imgs[0])
+            frames_team1.append(frame_imgs[1])
+            
+            buf_comb = io.BytesIO()
+            fig_comb.savefig(buf_comb, format="png", bbox_inches='tight', facecolor=fig_comb.get_facecolor(), dpi=100)
+            buf_comb.seek(0)
+            frames_combined.append(Image.open(buf_comb).convert('RGB'))
+            plt.close(fig_comb)
+            
+            st.session_state[f'full_vid_prog_{match_id}'] = (idx + 1) / total_frames
+            
+        st.session_state[f'full_vid_status_{match_id}'] = 'compiling'
+        
+        mp4_buffers = {}
+        for name, frame_list in [('team0', frames_team0), ('team1', frames_team1), ('combined', frames_combined)]:
+            mp4_buf = io.BytesIO()
+            
+            # Duplicate frames to make the video ~20 seconds long at 12 FPS
+            # 80 unique frames * 3 duplications = 240 total frames. 240 / 12 FPS = 20 seconds.
+            np_frames_expanded = []
+            for frame in frame_list:
+                np_frame = np.array(frame)
+                for _ in range(3):
+                    np_frames_expanded.append(np_frame)
+                    
+            iio.imwrite(mp4_buf, np_frames_expanded, extension='.mp4', plugin='FFMPEG', fps=12)
+            mp4_buf.seek(0)
+            mp4_buffers[name] = mp4_buf.getvalue()
+            
+        st.session_state[f'full_vid_results_{match_id}'] = mp4_buffers
+        st.session_state[f'full_vid_status_{match_id}'] = 'done'
+        
+    except Exception as e:
+        st.session_state[f'full_vid_status_{match_id}'] = f'error: {str(e)}'
+
 
 st.title("⚽ Tactical Dashboard")
 st.markdown("Generate beautiful passing networks, shot maps, and heatmaps using WhoScored data.")
@@ -198,8 +329,8 @@ if st.session_state.get('dashboard_active', False):
                         st.stop()
                     
                     # Create Tabs
-                    tab_net, tab_shot, tab_heat, tab_sonar, tab_shape, tab_anim = st.tabs([
-                        "Passing Networks", "Shot Maps", "Heatmaps", "Pass Sonars 📡", "Team Shape 🛡️", "Animation 🎬"
+                    tab_net, tab_shot, tab_heat, tab_sonar, tab_shape, tab_anim, tab_full_video = st.tabs([
+                        "Passing Networks", "Shot Maps", "Heatmaps", "Pass Sonars 📡", "Team Shape 🛡️", "Animation 🎬", "Full Match Video 🎥"
                     ])
                     
                     teams = [home_team, away_team]
@@ -626,6 +757,62 @@ if st.session_state.get('dashboard_active', False):
                                     zip_images[f"Match_{match_id}_Combined_Timelapse.mp4"] = mp4_buf.getvalue()
                                 except Exception as e:
                                     st.error("Could not generate combined MP4")
+
+                    # -----------------------------------------------------
+                    # TAB 7: FULL MATCH VIDEO
+                    # -----------------------------------------------------
+                    with tab_full_video:
+                        st.subheader("90-Minute Continuous Passmap Video")
+                        st.markdown("Generates a smooth video showing the rolling 15-minute tactical momentum throughout the entire match. **This runs in the background**, meaning you can browse other tabs while it renders.")
+                        
+                        status_key = f'full_vid_status_{match_id}'
+                        prog_key = f'full_vid_prog_{match_id}'
+                        res_key = f'full_vid_results_{match_id}'
+                        
+                        if status_key not in st.session_state:
+                            st.session_state[status_key] = 'idle'
+                            
+                        status = st.session_state[status_key]
+                        
+                        if status == 'idle' or status.startswith('error'):
+                            if status.startswith('error'):
+                                st.error(f"Failed to generate video: {status}")
+                                
+                            st.warning("⚠️ Rendering takes ~60-90 seconds.")
+                            if st.button("Start Background Generation 🚀", key=f"btn_gen_full_{match_id}"):
+                                t = threading.Thread(target=generate_full_video_worker, args=(
+                                    match_id, teams, events, include_subs, bg_color, line_color, text_color, node_scale, arrow_scale
+                                ))
+                                add_script_run_ctx(t)
+                                t.start()
+                                st.rerun()
+                                
+                        elif status == 'running':
+                            st.info("Generation in progress in the background...")
+                            prog = st.session_state.get(prog_key, 0.0)
+                            st.progress(prog, text=f"Rendering frames... {int(prog*100)}%")
+                            st.button("🔄 Refresh Status", key=f"btn_ref_run_{match_id}")
+                            
+                        elif status == 'compiling':
+                            st.info("Compiling frames into high-quality MP4... Almost done!")
+                            st.progress(1.0, text="Compiling video...")
+                            st.button("🔄 Refresh Status", key=f"btn_ref_comp_{match_id}")
+                            
+                        elif status == 'done':
+                            st.success("Videos generated successfully!")
+                            res = st.session_state[res_key]
+                            
+                            st.video(res['combined'])
+                            
+                            c1, c2, c3 = st.columns(3)
+                            c1.download_button(f"Download {teams[0]} Video", res['team0'], file_name=f"{teams[0]}_{match_id}_Full.mp4", mime="video/mp4", use_container_width=True)
+                            c2.download_button(f"Download {teams[1]} Video", res['team1'], file_name=f"{teams[1]}_{match_id}_Full.mp4", mime="video/mp4", use_container_width=True)
+                            c3.download_button(f"Download Combined Video", res['combined'], file_name=f"Combined_{match_id}_Full.mp4", mime="video/mp4", use_container_width=True)
+                            
+                            if st.button("Reset / Generate Again", key=f"btn_reset_{match_id}"):
+                                st.session_state[status_key] = 'idle'
+                                st.rerun()
+
 
                     # Generate ZIP Download button in placeholder
                     if zip_images:
