@@ -205,7 +205,7 @@ st.markdown("Generate beautiful passing networks, shot maps, and heatmaps using 
 # DATA FETCHING FUNCTIONS
 # ==========================================
 @st.cache_data(show_spinner=False)
-def fetch_events(match_id, league, season, _log_placeholder):
+def fetch_events(match_id, league, season, force_fresh, _log_placeholder):
     handler = StreamlitLogHandler(_log_placeholder)
     handler.setFormatter(logging.Formatter('%(message)s'))
     
@@ -214,10 +214,12 @@ def fetch_events(match_id, league, season, _log_placeholder):
     sd_logger.addHandler(handler)
     
     try:
-        ws = sd.WhoScored(leagues=[league], seasons=season)
+        ws = sd.WhoScored(leagues=[league], seasons=season, no_cache=force_fresh)
         try:
-            # Force cache to prevent downloading 10 months of fixtures every time
-            events = ws.read_events(match_id=[int(match_id)], force_cache=True)
+            if force_fresh:
+                events = ws.read_events(match_id=[int(match_id)], force_cache=False)
+            else:
+                events = ws.read_events(match_id=[int(match_id)], force_cache=True)
         except Exception:
             # If not in cache or other error, fetch it explicitly
             events = ws.read_events(match_id=[int(match_id)])
@@ -244,6 +246,7 @@ with st.sidebar:
     
     st.divider()
     st.header("2. Settings & Filters")
+    force_fresh = st.checkbox("🔄 Force Fresh Data", value=False, help="Check this to force re-download from WhoScored if the match data says it's missing or incomplete.")
     time_range = st.slider("Time Range (Minutes)", 0, 120, (0, 90))
     include_subs = st.checkbox("Include Substitutes", value=False)
     mirror_away = st.checkbox("Mirror Away Team (Right to Left)", value=True)
@@ -274,7 +277,7 @@ if st.session_state.get('dashboard_active', False):
         
         with st.spinner("Processing match data..."):
             # Notice the _log_placeholder parameter to avoid hashing issues
-            events = fetch_events(match_id, league, season, log_placeholder)
+            events = fetch_events(match_id, league, season, force_fresh, log_placeholder)
             log_placeholder.empty()
             
             if events is None or events.empty:
